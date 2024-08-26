@@ -3,20 +3,20 @@
 
 use bsp::entry;
 use bsp::hal::{
-    clocks::{
-        init_clocks_and_plls, // , Clock
-    },
+    adc::{Adc, AdcPin},
+    clocks::init_clocks_and_plls,
     pac,
     sio::Sio,
     usb::UsbBus,
     watchdog::Watchdog,
     Timer,
 };
+use core::fmt::Write;
 use defmt_rtt as _;
 use embedded_hal::digital::StatefulOutputPin;
+use embedded_hal_0_2::adc::OneShot;
+use heapless::String;
 use panic_probe as _;
-// use core::fmt::Write;
-// use heapless::String;
 use rp_pico as bsp;
 use usb_device::{class_prelude::*, prelude::*};
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
@@ -39,6 +39,7 @@ fn main() -> ! {
     .unwrap();
 
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    let mut adc = Adc::new(pac.ADC, &mut pac.RESETS);
 
     let pins = bsp::Pins::new(
         pac.IO_BANK0,
@@ -48,7 +49,7 @@ fn main() -> ! {
     );
 
     let mut led_pin = pins.gpio8.into_push_pull_output();
-
+    let mut adc_pin_0 = AdcPin::new(pins.gpio26).unwrap();
     let usb_bus = UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
@@ -67,13 +68,24 @@ fn main() -> ! {
         .device_class(USB_CLASS_CDC)
         .build();
     let mut last_toggle = timer.get_counter_low();
-    let toggle_interval = 250_000;
+    let mut last_print = timer.get_counter_low();
+    let toggle_interval = 5_000_000;
+    let print_interval = 500_000;
     loop {
         let now = timer.get_counter_low();
+
         if now - last_toggle >= toggle_interval {
             led_pin.toggle().unwrap();
             last_toggle = now;
-            _ = serial.write("toggle led\r\n".as_bytes());
+        }
+
+        if now - last_print >= print_interval {
+            let value: u16 = adc.read(&mut adc_pin_0).unwrap();
+
+            let mut text: String<64> = String::new();
+            write!(text, "Value: {}\r\n", value).unwrap();
+            _ = serial.write(text.as_bytes());
+            last_print = now;
         }
 
         if usb_dev.poll(&mut [&mut serial]) {
