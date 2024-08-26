@@ -13,8 +13,7 @@ use bsp::hal::{
 };
 use core::fmt::Write;
 use defmt_rtt as _;
-use embedded_hal::digital::StatefulOutputPin;
-use embedded_hal_0_2::adc::OneShot;
+use embedded_hal::digital::OutputPin;
 use heapless::String;
 use panic_probe as _;
 use rp_pico as bsp;
@@ -49,7 +48,8 @@ fn main() -> ! {
     );
 
     let mut led_pin = pins.gpio8.into_push_pull_output();
-    let mut adc_pin_0 = AdcPin::new(pins.gpio26).unwrap();
+    let adc_pin_0 = AdcPin::new(pins.gpio26).unwrap();
+    _ = adc.free_running(&adc_pin_0);
     let usb_bus = UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
@@ -67,25 +67,24 @@ fn main() -> ! {
         .unwrap()
         .device_class(USB_CLASS_CDC)
         .build();
-    let mut last_toggle = timer.get_counter_low();
-    let mut last_print = timer.get_counter_low();
-    let toggle_interval = 5_000_000;
-    let print_interval = 500_000;
-    loop {
-        let now = timer.get_counter_low();
 
-        if now - last_toggle >= toggle_interval {
-            led_pin.toggle().unwrap();
-            last_toggle = now;
+    let mut last_log = timer.get_counter_low();
+    let log_interval = 250_000;
+
+    loop {
+        let value: u16 = adc.read_single();
+        if value > 1600 {
+            led_pin.set_low().unwrap();
+        } else {
+            led_pin.set_high().unwrap();
         }
 
-        if now - last_print >= print_interval {
-            let value: u16 = adc.read(&mut adc_pin_0).unwrap();
-
-            let mut text: String<64> = String::new();
+        let now = timer.get_counter_low();
+        if now - last_log >= log_interval {
+            let mut text = String::<64>::new();
             write!(text, "Value: {}\r\n", value).unwrap();
             _ = serial.write(text.as_bytes());
-            last_print = now;
+            last_log = now;
         }
 
         if usb_dev.poll(&mut [&mut serial]) {
